@@ -83,6 +83,7 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 
 // ForwardRequest forwards the incoming request to multiple target servers.
 func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Request) {
+	r.Header.Del("Accept-Encoding")
 	// Read the original request body.
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -124,13 +125,13 @@ func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Reque
 	}
 
 	// Log the results.
-	log.Printf("Response from %s: Status %d, Duration %v, Body: %s",
-		canisMajorResponse.URL, canisMajorResponse.StatusCode, canisMajorResponse.Duration, canisMajorResponse.Body)
-	log.Printf("Response from %s: Status %d, Duration %v, Body: %s",
-		brokerldResponse.URL, brokerldResponse.StatusCode, brokerldResponse.Duration, brokerldResponse.Body)
+	log.Printf("Response from %s: Status %d, Duration %v",
+		canisMajorResponse.URL, canisMajorResponse.StatusCode, canisMajorResponse.Duration)
+	log.Printf("Response from %s: Status %d, Duration %v",
+		brokerldResponse.URL, brokerldResponse.StatusCode, brokerldResponse.Duration)
 
 	// Decide which response to return to the client.
-	if brokerldResponse.StatusCode >= 400 || r.Method == "GET" || r.Method == "POST" {
+	if brokerldResponse.StatusCode >= 400 || r.Method == "GET" || r.Method == "HEAD" {
 		// If the broker-ngsild returns a 40x or 50x error, return its response.
 		w.WriteHeader(brokerldResponse.StatusCode)
 		w.Write([]byte(brokerldResponse.Body))
