@@ -1,0 +1,202 @@
+diff --git a/it/src/main/java/it/pojo/PluginConfig.java b/it/src/main/java/it/pojo/PluginConfig.java
+index 4c6dbcf..4470d5d 100644
+--- a/it/src/main/java/it/pojo/PluginConfig.java
++++ b/it/src/main/java/it/pojo/PluginConfig.java
+@@ -2,5 +2,6 @@ package it.pojo;
+ 
+ public class PluginConfig {
+ 	private String chain_id = "5777";
+-	public String rpc_url = "http://ganache-cli:8545";
++	// public String rpc_url = "http://ganache-cli:8545";
++        public String rpc_url = System.getenv("ETHEREUM_URL");
+ }
+diff --git a/it/src/test/java/it/StepDefinitions.java b/it/src/test/java/it/StepDefinitions.java
+index fd8face..cc2e802 100644
+--- a/it/src/test/java/it/StepDefinitions.java
++++ b/it/src/test/java/it/StepDefinitions.java
+@@ -73,6 +73,8 @@ public class StepDefinitions {
+ 
+ 	// address to be used for accessing the broker. Practically a switch between the proxy-mode and direct canis-major access.
+ 	private String ngsiAddress = "10.5.0.5:1026";
++	private String vaultAddress = "127.0.0.1:8200";
++	private String canisMajorAddress = "127.0.0.1:4000";
+ 
+ 	// we use testCount for the tests, so that we do not need to empty the blockchain all the time
+ 	// we start at a random point, to be able to run multiple times in local testing.
+@@ -83,12 +85,15 @@ public class StepDefinitions {
+ 	Map<String, Integer> franziExpectedTxMap = new HashMap<>();
+ 	Map<String, Integer> defaultExpectedTxMap = new HashMap<>();
+ 
++
+ 	@Before
+ 	public void setup() throws Exception {
+ 		testCounter++;
+ 		expectedTxMap = new HashMap<>();
+ 		try {
+ 			ngsiAddress = Optional.ofNullable(System.getenv("NGSI_ADDRESS")).orElse(ngsiAddress);
++			vaultAddress = Optional.ofNullable(System.getenv("VAULT_ADDRESS")).orElse(vaultAddress);
++			canisMajorAddress = Optional.ofNullable(System.getenv("CANIS_MAJOR_ADDRESS")).orElse(canisMajorAddress);
+ 		} catch (Exception e) {
+ 			// always use the default, if nothing is set
+ 		}
+@@ -115,14 +120,14 @@ public class StepDefinitions {
+ 
+ 	private boolean assertSystemIsRunning() {
+ 		return assertSuccess(new Request.Builder()
+-				.url(String.format("http://%s/health", CANIS_MAJOR_ADDRESS))
++				.url(String.format("http://%s/health", canisMajorAddress))
+ 				.build());
+ 
+ 	}
+ 
+ 	private boolean assertVaultIsRunning() {
+ 		return assertSuccess(new Request.Builder()
+-				.url(String.format("http://%s/v1/sys/health", VAULT_ADDRESS))
++				.url(String.format("http://%s/v1/sys/health", vaultAddress))
+ 				.build());
+ 	}
+ 
+@@ -137,7 +142,7 @@ public class StepDefinitions {
+ 
+ 		Request registrationRequest = new Request.Builder()
+ 				.addHeader("X-Vault-Token", VAULT_ROOT_TOKEN)
+-				.url(String.format("http://%s/v1/sys/plugins/catalog/secret/vault-ethereum", VAULT_ADDRESS))
++				.url(String.format("http://%s/v1/sys/plugins/catalog/secret/vault-ethereum", vaultAddress))
+ 				.method("PUT", registrationRequestBody)
+ 				.addHeader("Content-Type", "application/json")
+ 				.build();
+@@ -148,7 +153,7 @@ public class StepDefinitions {
+ 		RequestBody enableRequestBody = RequestBody.create(OBJECT_MAPPER.writeValueAsString(new EthereumPluginMount()), MediaType.get("application/json"));
+ 		Request enableRequest = new Request.Builder()
+ 				.addHeader("X-Vault-Token", VAULT_ROOT_TOKEN)
+-				.url(String.format("http://%s/v1/sys/mounts/ethereum", VAULT_ADDRESS))
++				.url(String.format("http://%s/v1/sys/mounts/ethereum", vaultAddress))
+ 				.method("POST", enableRequestBody)
+ 				.build();
+ 		Response enableResponse = okHttpClient.newCall(enableRequest).execute();
+@@ -163,7 +168,7 @@ public class StepDefinitions {
+ 
+ 		Request configRequest = new Request.Builder()
+ 				.addHeader("X-Vault-Token", VAULT_ROOT_TOKEN)
+-				.url(String.format("http://%s/v1/ethereum/config", VAULT_ADDRESS))
++				.url(String.format("http://%s/v1/ethereum/config", vaultAddress))
+ 				.method("PUT", configRequestBody)
+ 				.addHeader("Content-Type", "application/json")
+ 				.build();
+@@ -179,7 +184,7 @@ public class StepDefinitions {
+ 
+ 		Request registrationRequest = new Request.Builder()
+ 				.addHeader("X-Vault-Token", VAULT_ROOT_TOKEN)
+-				.url(String.format("http://%s/v1/ethereum/accounts/franzi", VAULT_ADDRESS))
++				.url(String.format("http://%s/v1/ethereum/accounts/franzi", vaultAddress))
+ 				.method("PUT", accountRegistrationRequest)
+ 				.addHeader("Content-Type", "application/json")
+ 				.build();
+@@ -194,7 +199,7 @@ public class StepDefinitions {
+ 
+ 		Request registrationRequest = new Request.Builder()
+ 				.addHeader("X-Vault-Token", VAULT_ROOT_TOKEN)
+-				.url(String.format("http://%s/v1/ethereum/accounts/mira", VAULT_ADDRESS))
++				.url(String.format("http://%s/v1/ethereum/accounts/mira", vaultAddress))
+ 				.method("PUT", accountRegistrationRequest)
+ 				.addHeader("Content-Type", "application/json")
+ 				.build();
+@@ -280,7 +285,7 @@ public class StepDefinitions {
+ 		Request request = new Request.Builder()
+ 				.addHeader("NGSILD-Tenant", NGSILD_TENANT)
+ 				.addHeader("Wallet-Type", "Vault")
+-				.addHeader("Wallet-Address", "http://vault:8200/v1/ethereum/accounts/franzi")
++				.addHeader("Wallet-Address", String.format("http://%s/v1/ethereum/accounts/franzi", vaultAddress))
+ 				.addHeader("Wallet-Token", VAULT_ROOT_TOKEN)
+ 				.url(String.format("http://%s/ngsi-ld/v1/entities/%s/attrs", ngsiAddress, storeID))
+ 				.method("POST", requestBody)
+@@ -296,7 +301,7 @@ public class StepDefinitions {
+ 	public void mira_get_test_store() throws Exception {
+ 
+ 		String storeID = String.format("urn:ngsi-ld:Building:%s", testCounter);
+-		HttpUrl httpUrl = HttpUrl.parse(String.format("http://%s/ngsi-ld/v1/entities/%s", CANIS_MAJOR_ADDRESS, storeID))
++		HttpUrl httpUrl = HttpUrl.parse(String.format("http://%s/ngsi-ld/v1/entities/%s", canisMajorAddress, storeID))
+ 				.newBuilder()
+ 				.addEncodedQueryParameter("attrs", "address")
+ 				.addEncodedQueryParameter("type", "Building")
+@@ -304,7 +309,7 @@ public class StepDefinitions {
+ 		Request request = new Request.Builder()
+ 				.addHeader("NGSILD-Tenant", NGSILD_TENANT)
+ 				.addHeader("Wallet-Type", "Vault")
+-				.addHeader("Wallet-Address", "http://vault:8200/v1/ethereum/accounts/mira")
++				.addHeader("Wallet-Address", String.format("http://%s/v1/ethereum/accounts/mira", vaultAddress))
+ 				.addHeader("Wallet-Token", VAULT_ROOT_TOKEN)
+ 				.url(httpUrl)
+ 				.get()
+@@ -317,7 +322,7 @@ public class StepDefinitions {
+ 
+ 	@When("Mira queries for unicorns.")
+ 	public void mira_queries_unicorns_to_default() throws Exception {
+-		HttpUrl httpUrl = HttpUrl.parse(String.format("http://%s/ngsi-ld/v1/entities", CANIS_MAJOR_ADDRESS))
++		HttpUrl httpUrl = HttpUrl.parse(String.format("http://%s/ngsi-ld/v1/entities", canisMajorAddress))
+ 				.newBuilder()
+ 				.addEncodedQueryParameter("attrs", "color")
+ 				.addEncodedQueryParameter("type", "Unicorn")
+@@ -326,7 +331,7 @@ public class StepDefinitions {
+ 		Request request = new Request.Builder()
+ 				.addHeader("NGSILD-Tenant", NGSILD_TENANT)
+ 				.addHeader("Wallet-Type", "Vault")
+-				.addHeader("Wallet-Address", "http://vault:8200/v1/ethereum/accounts/mira")
++				.addHeader("Wallet-Address", String.format("http://%s/v1/ethereum/accounts/mira", vaultAddress))
+ 				.addHeader("Wallet-Token", VAULT_ROOT_TOKEN)
+ 				.url(httpUrl)
+ 				.get()
+@@ -340,7 +345,7 @@ public class StepDefinitions {
+ 
+ 	@When("Mira queries for unicorns, providing a user id.")
+ 	public void mira_queries_unicorns_to_mira() throws Exception {
+-		HttpUrl httpUrl = HttpUrl.parse(String.format("http://%s/ngsi-ld/v1/entities", CANIS_MAJOR_ADDRESS))
++		HttpUrl httpUrl = HttpUrl.parse(String.format("http://%s/ngsi-ld/v1/entities", canisMajorAddress))
+ 				.newBuilder()
+ 				.addEncodedQueryParameter("attrs", "color")
+ 				.addEncodedQueryParameter("type", "Unicorn")
+@@ -349,7 +354,7 @@ public class StepDefinitions {
+ 		Request request = new Request.Builder()
+ 				.addHeader("NGSILD-Tenant", NGSILD_TENANT)
+ 				.addHeader("Wallet-Type", "Vault")
+-				.addHeader("Wallet-Address", "http://vault:8200/v1/ethereum/accounts/mira")
++				.addHeader("Wallet-Address", String.format("http://%s/v1/ethereum/accounts/mira", vaultAddress))
+ 				.addHeader("Wallet-Token", VAULT_ROOT_TOKEN)
+ 				.addHeader("Related-Entity", "urn:ngsi-ld:requestor:mira")
+ 				.url(httpUrl)
+@@ -380,7 +385,7 @@ public class StepDefinitions {
+ 		Request request = new Request.Builder()
+ 				.addHeader("NGSILD-Tenant", NGSILD_TENANT)
+ 				.addHeader("Wallet-Type", "Vault")
+-				.addHeader("Wallet-Address", "http://vault:8200/v1/ethereum/accounts/mira")
++				.addHeader("Wallet-Address", String.format("http://%s/v1/ethereum/accounts/mira", vaultAddress))
+ 				.addHeader("Wallet-Token", VAULT_ROOT_TOKEN)
+ 				.url(String.format("http://%s/ngsi-ld/v1/entities/%s/attrs", ngsiAddress, storeID))
+ 				.method("POST", requestBody)
+@@ -541,7 +546,7 @@ public class StepDefinitions {
+ 
+ 		Request request = new Request.Builder()
+ 				// we can only request by db id
+-				.url(String.format("http://%s/entity/%s", CANIS_MAJOR_ADDRESS, String.format("urn:ngsi-ld:Building:%s", testCounter)))
++				.url(String.format("http://%s/entity/%s", canisMajorAddress, String.format("urn:ngsi-ld:Building:%s", testCounter)))
+ 				.build();
+ 
+ 		OkHttpClient okHttpClient = new OkHttpClient();
+@@ -574,7 +579,7 @@ public class StepDefinitions {
+ 	private EntityTransactions getTransactionsForEntity(String entityId) throws Exception {
+ 		Request request = new Request.Builder()
+ 				// we can only request by db id
+-				.url(String.format("http://%s/entity", CANIS_MAJOR_ADDRESS))
++				.url(String.format("http://%s/entity", canisMajorAddress))
+ 				.build();
+ 		OkHttpClient okHttpClient = new OkHttpClient();
+ 		Response response = okHttpClient.newCall(request).execute();
+@@ -605,7 +610,7 @@ public class StepDefinitions {
+ 			request = new Request.Builder()
+ 					.addHeader("NGSILD-Tenant", NGSILD_TENANT)
+ 					.addHeader("Wallet-Type", "Vault")
+-					.addHeader("Wallet-Address", "http://vault:8200/v1/ethereum/accounts/" + ethAccount.toLowerCase(Locale.ROOT))
++					.addHeader("Wallet-Address", String.format("http://%s/v1/ethereum/accounts/", vaultAddress) + ethAccount.toLowerCase(Locale.ROOT))
+ 					.addHeader("Wallet-Token", VAULT_ROOT_TOKEN)
+ 					.url(String.format("http://%s/ngsi-ld/v1/entities/", ngsiAddress))
+ 					.method("POST", requestBody)

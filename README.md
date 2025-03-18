@@ -39,9 +39,10 @@ Of course, if I forward the requests to 2 different servers, the responses can b
 This piece of software also solves a glitch between the Canis Major and OrionLD. At this moment, there are some know issues with Orion LD POSTS to `.../attrs` and Canis Major doesn't support PATCH to `.../attrs`, so, the following 
 rule applies:
 
--  PATCH to `.../attrs`will be used as a PATCH. Nothing changes.
+- PATCH to `.../attrs`will be used as a PATCH. Nothing changes.
 - POST to `.../attrs`will be used as a POST to CANIS_MAJOR and as PATCH to NGSILD_BROKER.
 
+I also changed the integration tests for Canis Major and here I provide the patch. Hopefully in the future there will be a proper Pull Request to Canis Major. The patch is described in [CanisMajorPatch](CanisMajorPatch/README.md).
 
 ## Dockerfile
 
