@@ -36,6 +36,13 @@ Of course, if I forward the requests to 2 different servers, the responses can b
 
 - On GET / HEAD / DELETE - It won't forward anything to CANIS_MAJOR and it will return whatever the NGSILD_BROKER returns.
 
+This piece of software also solves a glitch between the Canis Major and OrionLD. At this moment, there are some know issues with Orion LD POSTS to `.../attrs` and Canis Major doesn't support PATCH to `.../attrs`, so, the following 
+rule applies:
+
+-  PATCH to `.../attrs`will be used as a PATCH. Nothing changes.
+- POST to `.../attrs`will be used as a POST to CANIS_MAJOR and as PATCH to NGSILD_BROKER.
+
+
 ## Dockerfile
 
 Podemos crear el docker de **muliphein** simplemente ejecutando
