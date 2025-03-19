@@ -6,7 +6,7 @@ In order to pass the Integration tests of Canis Major, after downloading the Can
 git clone https://github.com/FIWARE/CanisMajor.git
 ```
 
-Here by I provide a patch to Canis Major testing (the default version is very restrictive with IPs / services), so 
+Here by I provide a patch to Canis Major testing (the default version is very restrictive with IPs / services), so
 
 ```
 cd CanisMajor
@@ -30,5 +30,5 @@ export CANIS_MAJOR_ADDRESS=canis_major_host_8080
 export VAULT_ADDRESS=vault_host:8200
 
 # Ethereum URL (ganache in our case). Note this is an URL, not a host:port 
-export ETHEREUM_URL="http://ganache-cli-uop-fiware-canis-major.apps.p2code-testbed.rh-horizon.eu";
+export ETHEREUM_URL=http://ganache-cli
 ```

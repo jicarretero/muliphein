@@ -76,7 +76,7 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 		method = "PATCH"
 	}
 
-	if (method == "GET" || method == "HEAD" || method == "DELETE") && target.isCanisMajor {
+	if (method == "GET" || method == "HEAD") && target.isCanisMajor {
 		*results <- ResponseResult{
 			URL:        target.URL,
 			StatusCode: 599,
@@ -200,7 +200,7 @@ func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Reque
 
 	// Decide which response to return to the client.
 	// TODO - This is opinionated... need further discussion.
-	if canisMajorResponse.StatusCode >= 400 || r.Method == "GET" || r.Method == "HEAD" || r.Method == "DELETE" {
+	if canisMajorResponse.StatusCode >= 400 || r.Method == "GET" || r.Method == "HEAD" {
 		// If the Canis-Major returns a 40x or 50x error, return its response.
 		w.WriteHeader(brokerldResponse.StatusCode)
 		w.Write([]byte(brokerldResponse.Body))

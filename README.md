@@ -32,11 +32,11 @@ export  DUMP_AS_CURL=yes
 
 Of course, if I forward the requests to 2 different servers, the responses can be different. So, what one will be returned?. Here some decisions have been adopted, and these decisions are opinionated, maybe this change in the future.
 
-- On POSTS / PATCH / PUT - Resposes are returned from Canis majore (or whatever CANIS_MAJOR_URL is. In case of 40X or 50x responses, it will return the NGSILD_BROKER_URL.
+- On POSTS / PATCH / PUT / DELETE - Resposes are returned from Canis majore (or whatever CANIS_MAJOR_URL is. In case of 40X or 50x responses, it will return the NGSILD_BROKER_URL.
 
-- On GET / HEAD / DELETE - It won't forward anything to CANIS_MAJOR and it will return whatever the NGSILD_BROKER returns.
+- On GET / HEAD - It won't forward anything to CANIS_MAJOR and it will return whatever the NGSILD_BROKER returns.
 
-This piece of software also solves a glitch between the Canis Major and OrionLD. At this moment, there are some know issues with Orion LD POSTS to `.../attrs` and Canis Major doesn't support PATCH to `.../attrs`, so, the following 
+This piece of software also solves a glitch between the Canis Major and OrionLD. At this moment, there are some know issues with Orion LD POSTS to `.../attrs` and Canis Major doesn't support PATCH to `.../attrs`, so, the following
 rule applies:
 
 - PATCH to `.../attrs`will be used as a PATCH. Nothing changes.
