@@ -20,7 +20,7 @@ It listens on port **8080**, it can't be configured.
 
 ## Help debugging
 
-Sometimes, things doesn't go as expected, in order to check the requests it receives, it can wirte `curl`commands equivalent to requets it receives (it shows localhost:1026 instead of current IPs).
+Sometimes, things doesn't go as expected, in order to check the requests it receives, it can write `curl`commands equivalent to requets it receives (it shows localhost:1026 instead of current IPs).
 
 These curl commands will be writen to files named `/tmp/here-x.req`, where x is a sequential number starting from 1. It also shows these commands in logs.
 
@@ -32,9 +32,9 @@ export  DUMP_AS_CURL=yes
 
 Of course, if I forward the requests to 2 different servers, the responses can be different. So, what one will be returned?. Here some decisions have been adopted, and these decisions are opinionated, maybe this change in the future.
 
-- On POSTS / PATCH / PUT / DELETE - Resposes are returned from Canis majore (or whatever CANIS_MAJOR_URL is. In case of 40X or 50x responses, it will return the NGSILD_BROKER_URL.
+- On POSTS / PATCH / PUT / DELETE - Resposes are returned from Canis majore (or whatever CANIS_MAJOR_URL is). In case of 40X or 50x responses, it will return the ngsi-ld broker response (or whatever it is NGSILD_BROKER_URL).
 
-- On GET / HEAD - It won't forward anything to CANIS_MAJOR and it will return whatever the NGSILD_BROKER returns.
+- On GET / HEAD - It won't forward anything to Canis Major (CANIS_MAJOR_URL) and it will return whatever the NGSI-LD Broker response (NGSILD_BROKER_URL).
 
 This piece of software also solves a glitch between the Canis Major and OrionLD. At this moment, there are some know issues with Orion LD POSTS to `.../attrs` and Canis Major doesn't support PATCH to `.../attrs`, so, the following
 rule applies:
