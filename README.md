@@ -32,7 +32,7 @@ export  DUMP_AS_CURL=yes
 
 Of course, if I forward the requests to 2 different servers, the responses can be different. So, what one will be returned?. Here some decisions have been adopted, and these decisions are opinionated, maybe this change in the future.
 
-- On POSTS / PATCH / PUT / DELETE - Resposes are returned from Canis majore (or whatever CANIS_MAJOR_URL is). In case of 40X or 50x responses, it will return the ngsi-ld broker response (or whatever it is NGSILD_BROKER_URL).
+- On POSTS / PATCH / PUT / DELETE - Resposes are returned from Canis Major (or whatever CANIS_MAJOR_URL is). In case of 40X or 50x responses, it will return the ngsi-ld broker response (or whatever it is NGSILD_BROKER_URL).
 
 - On GET / HEAD - It won't forward anything to Canis Major (CANIS_MAJOR_URL) and it will return whatever the NGSI-LD Broker response (NGSILD_BROKER_URL).
 
@@ -46,15 +46,15 @@ I also changed the integration tests for Canis Major and here I provide the patc
 
 ## Dockerfile
 
-Podemos crear el docker de **muliphein** simplemente ejecutando
+We can create the corresponding docker image executing the following command:
 
-```
+```bash
 docker build -t muliphein:${version} .
 ```
 
-Posteriormente, podemos ejecutarlo (sea esto un ejemplo) tal que así:
+Atferwards, we can run the corresponding docker container with the following command:
 
-```
+```bash
 docker run --rm \
     -e NGSILD_BROKER_URL=http://192.168.3.253:1026 \
     -e CANIS_MAJOR_URL=http://192.168.3.253:1036 \
