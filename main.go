@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jicarretero/muliphein/psqldb"
 )
 
 var (
@@ -22,6 +25,7 @@ type TargetServer struct {
 	URL          string
 	Client       *http.Client
 	isCanisMajor bool
+	isUndefined  bool
 }
 
 // ResponseResult holds the response and timing information for a target server.
@@ -33,8 +37,9 @@ type ResponseResult struct {
 	Error      error
 }
 
-// Dumps the request received in a CURL statement. In files named /tmp/here-x.req --
-// It needs the DUMP_AS_CURL variable with the value "yes" in environment.
+// DumpCurl Dumps the request received in a CURL statement. In files named /tmp/here-x.req --
+// It needs the DUMP_AS_CURL variable with the value "yes" in environment. It makes things
+// slower.
 func DumpCurl(r *http.Request, bodyBytes []byte) {
 	if !dumpCurl {
 		return
@@ -68,6 +73,15 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 
 	method := r.Method
 
+	if target.isUndefined {
+		*results <- ResponseResult{
+			URL:        target.URL,
+			StatusCode: 410,
+			Body:       "",
+		}
+		return
+	}
+
 	// orion-ld has some issues using POST on attributes
 	// canis-major does not support PATCH on attibutes
 	// ... I cursed and tweaked.
@@ -89,7 +103,7 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 	start := time.Now()
 
 	// Create a new request with a copy of the body.
-	req, err := http.NewRequest(method, target.URL+r.URL.Path, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequest(method, target.URL+r.RequestURI, bytes.NewReader(bodyBytes))
 	if err != nil {
 		log.Printf("ERROR [newRequest]%s - %s   ==> %v", method, target.URL+r.URL.Path, err)
 		*results <- ResponseResult{
@@ -148,7 +162,7 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 }
 
 // ForwardRequest forwards the incoming request to multiple target servers.
-func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Request) {
+func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Request, repo *psqldb.OperationRepository) {
 	log.Println("\n--------------------------------------------------------")
 	// Read the original request body.
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -205,40 +219,95 @@ func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(brokerldResponse.StatusCode)
 		w.Write([]byte(brokerldResponse.Body))
 	} else {
+		createRecordInDatabase(repo, canisMajorResponse, brokerldResponse, r, bodyBytes)
+
 		// Otherwise, return the response of Canis Major
 		w.WriteHeader(canisMajorResponse.StatusCode)
 		w.Write([]byte(canisMajorResponse.Body))
 	}
 }
 
+func compactJson(bodyBytes []uint8) ([]byte, error) {
+	var buf bytes.Buffer
+	err := json.Compact(&buf, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func createRecordInDatabase(repo *psqldb.OperationRepository, cmResult ResponseResult, cbResult ResponseResult, r *http.Request, bodyBytes []uint8) {
+	if repo == nil {
+		// No connection to database. Nothing is done here.
+		return
+	}
+	var op psqldb.Operation
+	var err error
+	op.CMStatus = uint16(cmResult.StatusCode)
+	op.LDStatus = uint16(cbResult.StatusCode)
+	op.Method = r.Method
+	op.OutData = json.RawMessage(cmResult.Body)
+	op.InData, err = compactJson(bodyBytes)
+	if err != nil {
+		log.Println("UNDEFINED Behaviour in InData")
+	}
+	op.CreatedAt = time.Now().String()
+
+	op.Tenant = r.Header.Get("Ngsild-Tenant")
+	op.LinkHdr = r.Header.Get("Link")
+	psqldb.CreateOperation(repo, &op)
+
+	// ticketid
+	// ticketNumber
+	// entity_id
+}
+
 func main() {
 	url_canis_major := os.Getenv("CANIS_MAJOR_URL")
 	url_broker := os.Getenv("NGSILD_BROKER_URL")
 	dumpCurl = strings.ToLower(os.Getenv("DUMP_AS_CURL")) == "yes"
+	psqlConnString := os.Getenv("PSQL_URL")
+
+	var repo *psqldb.OperationRepository
 
 	if url_broker == "" || url_canis_major == "" {
 		log.Fatalf("Environment variables CANIS_MAJOR_URL and NGSILD_BROKER_URL must be exported")
 	}
 
 	log.Printf("Forking between: %s %s", url_canis_major, url_broker)
+	log.Printf("Using db: %s", psqlConnString)
+
+	if psqlConnString != "" {
+		var err error
+		repo, err = psqldb.NewOperationRepository(psqlConnString)
+
+		if err != nil {
+			log.Println("ERROR Connecting to db - Continuing without a database")
+		}
+	}
+
+	defer repo.Close()
+
 	// Define the target servers with a 2 seconds timeout each.
 	targets := []TargetServer{
 		{
 			URL:          url_canis_major,
 			Client:       &http.Client{Timeout: 5 * time.Second},
 			isCanisMajor: true,
+			isUndefined:  strings.ToLower(url_canis_major) == "none",
 		},
 		{
 			URL:          url_broker,
 			Client:       &http.Client{Timeout: 5 * time.Second},
 			isCanisMajor: false,
+			isUndefined:  false,
 		},
 	}
 
 	// Set up the HTTP server.
 	http.HandleFunc("/", func(writer http.ResponseWriter, reader *http.Request) {
 		// Forward the request to all target servers.
-		ForwardRequest(targets, writer, reader)
+		ForwardRequest(targets, writer, reader, repo)
 	})
 
 	// Start the server.
