@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"fmt"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -10,11 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-var (
-	rq       int = 0
-	dumpCurl     = false
+	"github.com/jicarretero/muliphein/funcs"
+	"github.com/jicarretero/muliphein/psqldb"
 )
 
 // TargetServer represents a server to forward requests to.
@@ -22,6 +20,7 @@ type TargetServer struct {
 	URL          string
 	Client       *http.Client
 	isCanisMajor bool
+	isUndefined  bool
 }
 
 // ResponseResult holds the response and timing information for a target server.
@@ -33,40 +32,30 @@ type ResponseResult struct {
 	Error      error
 }
 
-// Dumps the request received in a CURL statement. In files named /tmp/here-x.req --
-// It needs the DUMP_AS_CURL variable with the value "yes" in environment.
-func DumpCurl(r *http.Request, bodyBytes []byte) {
-	if !dumpCurl {
-		return
-	}
-
-	rq = rq + 1
-
-	s := fmt.Sprintf("curl -X %s ${NGSILD_ADDRESS}%s \\\n", r.Method, r.URL.Path)
-	for key, value := range r.Header {
-		s = fmt.Sprintf("%s -H \"%s: %s\" \\\n", s, key, value[0])
-	}
-	s = fmt.Sprintf("%s-d '%s'", s, string(bodyBytes))
-
-	log.Printf("\n%s\n", s)
-
-	tmpFile, err := os.OpenFile(fmt.Sprintf("/tmp/here-%d.req", rq), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return
-	}
-	defer tmpFile.Close()
-
-	// Write the byte array to the file
-	if _, err := tmpFile.WriteString(s); err != nil {
-		return
-	}
-}
-
 // Send the received request to any of NGSILD-BROKER or CANIS-MAJOR
 func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResult, r *http.Request, bodyBytes []byte) {
 	defer wg.Done()
 
 	method := r.Method
+
+	if target.isUndefined {
+		*results <- ResponseResult{
+			URL:        target.URL,
+			StatusCode: 410,
+			Body:       "",
+		}
+		return
+	}
+
+	// Canis-major does not support "DELETE"
+	if r.Method == "DELETE" {
+		*results <- ResponseResult{
+			URL:        target.URL,
+			StatusCode: 405,
+			Body:       "Method not Allowed. Refer to API: https://github.com/FIWARE/CanisMajor/blob/master/api/api.yaml",
+		}
+		return
+	}
 
 	// orion-ld has some issues using POST on attributes
 	// canis-major does not support PATCH on attibutes
@@ -89,7 +78,7 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 	start := time.Now()
 
 	// Create a new request with a copy of the body.
-	req, err := http.NewRequest(method, target.URL+r.URL.Path, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequest(method, target.URL+r.RequestURI, bytes.NewReader(bodyBytes))
 	if err != nil {
 		log.Printf("ERROR [newRequest]%s - %s   ==> %v", method, target.URL+r.URL.Path, err)
 		*results <- ResponseResult{
@@ -157,7 +146,7 @@ func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	DumpCurl(r, bodyBytes)
+	funcs.DumpCurl(r, bodyBytes)
 
 	log.Printf("%s  %s", r.Method, r.URL)
 	defer r.Body.Close()
@@ -205,33 +194,70 @@ func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(brokerldResponse.StatusCode)
 		w.Write([]byte(brokerldResponse.Body))
 	} else {
+		createRecordInDatabase(canisMajorResponse, brokerldResponse, r, bodyBytes)
+
 		// Otherwise, return the response of Canis Major
 		w.WriteHeader(canisMajorResponse.StatusCode)
 		w.Write([]byte(canisMajorResponse.Body))
 	}
 }
 
+// Prepares a record to be writen in the database.
+func createRecordInDatabase(cmResult ResponseResult, cbResult ResponseResult, r *http.Request, bodyBytes []uint8) {
+	if !psqldb.Connected() {
+		// No connection to database. Nothing is done here.
+		return
+	}
+	var op psqldb.Operation
+	var err error
+	op.CMStatus = uint16(cmResult.StatusCode)
+	op.LDStatus = uint16(cbResult.StatusCode)
+	op.Method = r.Method
+	op.OutData = json.RawMessage(cmResult.Body)
+	op.InData, err = funcs.CompactJson(bodyBytes)
+	op.RequestUri = r.RequestURI
+	if err != nil {
+		log.Println("UNDEFINED Behaviour in InData")
+	}
+	op.CreatedAt = time.Now().String()
+
+	op.Tenant = r.Header.Get("Ngsild-Tenant")
+	op.LinkHdr = r.Header.Get("Link")
+	psqldb.CreateOperation(&op)
+}
+
 func main() {
 	url_canis_major := os.Getenv("CANIS_MAJOR_URL")
 	url_broker := os.Getenv("NGSILD_BROKER_URL")
-	dumpCurl = strings.ToLower(os.Getenv("DUMP_AS_CURL")) == "yes"
+
+	funcs.Config()
+	repo, err := psqldb.Config()
+
+	if err != nil {
+		log.Printf("No database connection done")
+	}
+
+	defer repo.Close()
 
 	if url_broker == "" || url_canis_major == "" {
 		log.Fatalf("Environment variables CANIS_MAJOR_URL and NGSILD_BROKER_URL must be exported")
 	}
 
 	log.Printf("Forking between: %s %s", url_canis_major, url_broker)
+
 	// Define the target servers with a 2 seconds timeout each.
 	targets := []TargetServer{
 		{
 			URL:          url_canis_major,
 			Client:       &http.Client{Timeout: 5 * time.Second},
 			isCanisMajor: true,
+			isUndefined:  strings.ToLower(url_canis_major) == "none",
 		},
 		{
 			URL:          url_broker,
 			Client:       &http.Client{Timeout: 5 * time.Second},
 			isCanisMajor: false,
+			isUndefined:  false,
 		},
 	}
 
