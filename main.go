@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -12,12 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jicarretero/muliphein/funcs"
 	"github.com/jicarretero/muliphein/psqldb"
-)
-
-var (
-	rq       int = 0
-	dumpCurl     = false
 )
 
 // TargetServer represents a server to forward requests to.
@@ -37,36 +32,6 @@ type ResponseResult struct {
 	Error      error
 }
 
-// DumpCurl Dumps the request received in a CURL statement. In files named /tmp/here-x.req --
-// It needs the DUMP_AS_CURL variable with the value "yes" in environment. It makes things
-// slower.
-func DumpCurl(r *http.Request, bodyBytes []byte) {
-	if !dumpCurl {
-		return
-	}
-
-	rq = rq + 1
-
-	s := fmt.Sprintf("curl -X %s ${NGSILD_ADDRESS}%s \\\n", r.Method, r.URL.Path)
-	for key, value := range r.Header {
-		s = fmt.Sprintf("%s -H \"%s: %s\" \\\n", s, key, value[0])
-	}
-	s = fmt.Sprintf("%s-d '%s'", s, string(bodyBytes))
-
-	log.Printf("\n%s\n", s)
-
-	tmpFile, err := os.OpenFile(fmt.Sprintf("/tmp/here-%d.req", rq), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return
-	}
-	defer tmpFile.Close()
-
-	// Write the byte array to the file
-	if _, err := tmpFile.WriteString(s); err != nil {
-		return
-	}
-}
-
 // Send the received request to any of NGSILD-BROKER or CANIS-MAJOR
 func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResult, r *http.Request, bodyBytes []byte) {
 	defer wg.Done()
@@ -78,6 +43,16 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 			URL:        target.URL,
 			StatusCode: 410,
 			Body:       "",
+		}
+		return
+	}
+
+	// Canis-major does not support "DELETE"
+	if r.Method == "DELETE" {
+		*results <- ResponseResult{
+			URL:        target.URL,
+			StatusCode: 405,
+			Body:       "Method not Allowed. Refer to API: https://github.com/FIWARE/CanisMajor/blob/master/api/api.yaml",
 		}
 		return
 	}
@@ -162,7 +137,7 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 }
 
 // ForwardRequest forwards the incoming request to multiple target servers.
-func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Request, repo *psqldb.OperationRepository) {
+func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Request) {
 	log.Println("\n--------------------------------------------------------")
 	// Read the original request body.
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -171,7 +146,7 @@ func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	DumpCurl(r, bodyBytes)
+	funcs.DumpCurl(r, bodyBytes)
 
 	log.Printf("%s  %s", r.Method, r.URL)
 	defer r.Body.Close()
@@ -219,7 +194,7 @@ func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Reque
 		w.WriteHeader(brokerldResponse.StatusCode)
 		w.Write([]byte(brokerldResponse.Body))
 	} else {
-		createRecordInDatabase(repo, canisMajorResponse, brokerldResponse, r, bodyBytes)
+		createRecordInDatabase(canisMajorResponse, brokerldResponse, r, bodyBytes)
 
 		// Otherwise, return the response of Canis Major
 		w.WriteHeader(canisMajorResponse.StatusCode)
@@ -227,17 +202,9 @@ func ForwardRequest(targets []TargetServer, w http.ResponseWriter, r *http.Reque
 	}
 }
 
-func compactJson(bodyBytes []uint8) ([]byte, error) {
-	var buf bytes.Buffer
-	err := json.Compact(&buf, bodyBytes)
-	if err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func createRecordInDatabase(repo *psqldb.OperationRepository, cmResult ResponseResult, cbResult ResponseResult, r *http.Request, bodyBytes []uint8) {
-	if repo == nil {
+// Prepares a record to be writen in the database.
+func createRecordInDatabase(cmResult ResponseResult, cbResult ResponseResult, r *http.Request, bodyBytes []uint8) {
+	if !psqldb.Connected() {
 		// No connection to database. Nothing is done here.
 		return
 	}
@@ -247,7 +214,8 @@ func createRecordInDatabase(repo *psqldb.OperationRepository, cmResult ResponseR
 	op.LDStatus = uint16(cbResult.StatusCode)
 	op.Method = r.Method
 	op.OutData = json.RawMessage(cmResult.Body)
-	op.InData, err = compactJson(bodyBytes)
+	op.InData, err = funcs.CompactJson(bodyBytes)
+	op.RequestUri = r.RequestURI
 	if err != nil {
 		log.Println("UNDEFINED Behaviour in InData")
 	}
@@ -255,38 +223,27 @@ func createRecordInDatabase(repo *psqldb.OperationRepository, cmResult ResponseR
 
 	op.Tenant = r.Header.Get("Ngsild-Tenant")
 	op.LinkHdr = r.Header.Get("Link")
-	psqldb.CreateOperation(repo, &op)
-
-	// ticketid
-	// ticketNumber
-	// entity_id
+	psqldb.CreateOperation(&op)
 }
 
 func main() {
 	url_canis_major := os.Getenv("CANIS_MAJOR_URL")
 	url_broker := os.Getenv("NGSILD_BROKER_URL")
-	dumpCurl = strings.ToLower(os.Getenv("DUMP_AS_CURL")) == "yes"
-	psqlConnString := os.Getenv("PSQL_URL")
 
-	var repo *psqldb.OperationRepository
+	funcs.Config()
+	repo, err := psqldb.Config()
+
+	if err != nil {
+		log.Printf("No database connection done")
+	}
+
+	defer repo.Close()
 
 	if url_broker == "" || url_canis_major == "" {
 		log.Fatalf("Environment variables CANIS_MAJOR_URL and NGSILD_BROKER_URL must be exported")
 	}
 
 	log.Printf("Forking between: %s %s", url_canis_major, url_broker)
-	log.Printf("Using db: %s", psqlConnString)
-
-	if psqlConnString != "" {
-		var err error
-		repo, err = psqldb.NewOperationRepository(psqlConnString)
-
-		if err != nil {
-			log.Println("ERROR Connecting to db - Continuing without a database")
-		}
-	}
-
-	defer repo.Close()
 
 	// Define the target servers with a 2 seconds timeout each.
 	targets := []TargetServer{
@@ -307,7 +264,7 @@ func main() {
 	// Set up the HTTP server.
 	http.HandleFunc("/", func(writer http.ResponseWriter, reader *http.Request) {
 		// Forward the request to all target servers.
-		ForwardRequest(targets, writer, reader, repo)
+		ForwardRequest(targets, writer, reader)
 	})
 
 	// Start the server.

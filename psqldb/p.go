@@ -3,11 +3,19 @@ package psqldb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"regexp"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var (
+	// Matches /ngsi-ld/v1/entities/<entity_id> or /ngsi-ld/v1/entities/<entity_id>/attrs
+	entityPattern = regexp.MustCompile(`^/ngsi-ld/v1/entities/([^/]+)(?:/attrs)?/?$`)
 )
 
 type Entity struct {
@@ -19,7 +27,20 @@ type DLTXReceipt struct {
 	BlockNumberRaw  string `json:"blockNumberRaw"`
 }
 
-func getEntityID(jsonData []byte) string {
+// Given a request, I need to the the entityID either from the URL or from
+// the input data. And given that I have a "POST" for both "patches" and
+// for the creation of the entity, the value comes from the standard URL.path
+func getEntityID(op *Operation) string {
+	path := op.RequestUri
+
+	if matches := entityPattern.FindStringSubmatch(path); matches != nil {
+		return matches[1]
+	} else {
+		return getEntityIDFromJSON(op.InData)
+	}
+}
+
+func getEntityIDFromJSON(jsonData []byte) string {
 	var entity Entity
 	if err := json.Unmarshal(jsonData, &entity); err != nil {
 		entity.ID = ""
@@ -48,6 +69,7 @@ type Operation struct {
 	EntityID     string          `json:"entityId"`
 	TicketId     string          `json:"ticketId"`
 	TicketNumber string          `json:"ticketNumber"`
+	RequestUri   string          `json:"requestURI"`
 	CreatedAt    string          `json:"createdAt"`
 }
 
@@ -56,9 +78,26 @@ type OperationRepository struct {
 	pool *pgxpool.Pool
 }
 
-func CreateOperation(repo *OperationRepository, op *Operation) {
+var repo *OperationRepository = nil
+
+func Config() (*OperationRepository, error) {
+	var err error
+	psqlConnString := os.Getenv("PSQL_URL")
+	log.Printf("Using db: %s", psqlConnString)
+	if psqlConnString == "" {
+		return nil, errors.New("no PSQL_URL environment variable")
+	}
+	repo, err = NewOperationRepository(psqlConnString)
+	return repo, err
+}
+
+func Connected() bool {
+	return repo != nil
+}
+
+func CreateOperation(op *Operation) {
 	ethTicket := getEthReceipt(op.OutData)
-	entityId := getEntityID(op.InData)
+	entityId := getEntityID(op)
 	op.EntityID = entityId
 	op.TicketId = ethTicket.TransactionHash
 	op.TicketNumber = ethTicket.BlockNumberRaw
@@ -70,7 +109,7 @@ func CreateOperation(repo *OperationRepository, op *Operation) {
 func NewOperationRepository(connString string) (*OperationRepository, error) {
 	pool, err := pgxpool.New(context.Background(), connString)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to create connection pool: %w", err)
+		return nil, fmt.Errorf("unable to create connection pool: %w", err)
 	}
 
 	return &OperationRepository{pool: pool}, nil
@@ -87,8 +126,8 @@ func (r *OperationRepository) Close() {
 func (r *OperationRepository) CreateOperation(ctx context.Context, op *Operation) error {
 	query := `
 	   INSERT INTO operations (
-	     in_data, out_data, method, tenant, entity_id, ticket_id, ticket_number, cm_status, ld_status, link_header)
-	   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	     in_data, out_data, method, tenant, entity_id, ticket_id, ticket_number, cm_status, ld_status, link_header, request_uri)
+	   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
 
 	_, err := r.pool.Exec(ctx, query,
@@ -102,6 +141,7 @@ func (r *OperationRepository) CreateOperation(ctx context.Context, op *Operation
 		op.CMStatus,
 		op.LDStatus,
 		op.LinkHdr,
+		op.RequestUri,
 	)
 
 	if err != nil {
@@ -174,6 +214,7 @@ CREATE TABLE operations (
     ticket_id TEXT,
     ticket_number TEXT,
 	link_header TEXT,
+	request_uri TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
