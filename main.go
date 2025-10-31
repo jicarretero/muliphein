@@ -57,12 +57,21 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 		return
 	}
 
+	targetEndpoint := target.URL + r.RequestURI
+
 	// orion-ld has some issues using POST on attributes
 	// canis-major does not support PATCH on attibutes
 	// ... I cursed and tweaked.
 	if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/attrs") && !target.isCanisMajor {
 		log.Printf("... changing method to PATCH %s ", target.URL+r.URL.Path)
 		method = "PATCH"
+		targetEndpoint = strings.TrimSuffix(targetEndpoint, "/attrs")
+	}
+
+	if r.Method == "PATCH" && !strings.HasSuffix(r.URL.Path, "/attrs") && target.isCanisMajor {
+		log.Printf("... changing method to POST %s ", target.URL+r.URL.Path)
+		method = "POST"
+		targetEndpoint = targetEndpoint + "/attrs"
 	}
 
 	if (method == "GET" || method == "HEAD") && target.isCanisMajor {
@@ -78,7 +87,7 @@ func DoSend(target TargetServer, wg *sync.WaitGroup, results *chan ResponseResul
 	start := time.Now()
 
 	// Create a new request with a copy of the body.
-	req, err := http.NewRequest(method, target.URL+r.RequestURI, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequest(method, targetEndpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		log.Printf("ERROR [newRequest]%s - %s   ==> %v", method, target.URL+r.URL.Path, err)
 		*results <- ResponseResult{
